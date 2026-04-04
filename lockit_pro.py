@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/env python3
 """
 LockIt Pro - AES-256 File/Folder Locker with Context Menu Support
+Fixed: process exits completely when window is closed.
 """
 
 import sys
@@ -254,6 +255,9 @@ class LockItApp:
         self.center_window()
         self.setup_styles()
 
+        # Force exit when window is closed
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         main_frame = ttk.Frame(root, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -286,7 +290,7 @@ class LockItApp:
         self.shred_var = tk.BooleanVar(value=True)
         shred_frame = ttk.Frame(main_frame)
         shred_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Checkbutton(shred_frame, text="Securely shred original files (overwrite before delete)", 
+        ttk.Checkbutton(shred_frame, text="Securely shred original files (overwrite before delete)",
                         variable=self.shred_var).pack(anchor=tk.W)
 
         btn_frame = ttk.Frame(main_frame)
@@ -407,11 +411,15 @@ class LockItApp:
         else:
             self._run_operation("Unlock Folder", lambda p, pw: unlock_folder(p, pw))
 
+    def on_closing(self):
+        """Force exit when window is closed."""
+        self.root.destroy()
+        sys.exit(0)
+
 # ------------------------------------------------------------
 # Command-line handlers for context menu
 # ------------------------------------------------------------
 def show_password_dialog(title, prompt, hint=""):
-    """Simple password popup for command-line operations."""
     dialog = tk.Tk()
     dialog.title(title)
     dialog.geometry("400x180")
@@ -450,7 +458,7 @@ def handle_context_menu():
     action = sys.argv[1].lower()
     if action == "--lock" and len(sys.argv) >= 3:
         target = sys.argv[2]
-        shred = True   # default shred for context menu
+        shred = True
         if os.path.isdir(target):
             password = show_password_dialog("Lock Folder", "Enter password to lock this folder:")
             if password:
@@ -463,7 +471,7 @@ def handle_context_menu():
         else:
             if is_lockit_file(target):
                 messagebox.showerror("Error", "File is already locked. Use Unlock.")
-                return
+                sys.exit(0)
             password = show_password_dialog("Lock File", f"Enter password to lock:\n{os.path.basename(target)}")
             if password:
                 hint = simpledialog.askstring("Password Hint", "Enter a hint for this password (optional):")
@@ -472,6 +480,7 @@ def handle_context_menu():
                     messagebox.showinfo("Success", f"File locked: {new_path}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
+        sys.exit(0)
     elif action == "--unlock" and len(sys.argv) >= 3:
         target = sys.argv[2]
         if os.path.isdir(target):
@@ -485,7 +494,7 @@ def handle_context_menu():
         else:
             if not is_lockit_file(target):
                 messagebox.showerror("Error", "File is not locked or not a valid LockIt file.")
-                return
+                sys.exit(0)
             hint = load_hint(target)
             prompt = f"Enter password to unlock:\n{os.path.basename(target)}"
             password = show_password_dialog("Unlock File", prompt, hint)
@@ -495,12 +504,14 @@ def handle_context_menu():
                     messagebox.showinfo("Success", f"File unlocked: {original}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
+        sys.exit(0)
     elif action == "--properties" and len(sys.argv) >= 3:
         target = sys.argv[2]
         root = tk.Tk()
         root.withdraw()
         PropertiesDialog(root, target)
         root.mainloop()
+        sys.exit(0)
     else:
         main_gui()
 
@@ -508,6 +519,7 @@ def main_gui():
     root = tk.Tk()
     app = LockItApp(root)
     root.mainloop()
+    sys.exit(0)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
