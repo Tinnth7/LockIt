@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['lockit_pro.py'],
+    ['lockitpro.py'],
     pathex=[],
     binaries=[],
     datas=[],
