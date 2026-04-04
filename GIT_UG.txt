@@ -1,0 +1,29 @@
+git status
+git add .
+git commit -m "what you did"
+git push
+
+
+___
+
+
+|    Command                    |  What it does                      |  Example                         |
+| ----------------------------- | ---------------------------------- | -------------------------------- |
+| `git init`                    | Start a Git repo in current folder | `git init`                       |
+| `git status`                  | Show what changed                  | `git status`                     |
+| `git add <file>`              | Track a file                       | `git add LockIt.py`              |
+| `git add .`                   | Track everything                   | `git add .`                      |
+| `git commit -m "msg"`         | Save snapshot                      | `git commit -m "added feature"`  |
+| `git log`                     | Show history                       | `git log`                        |
+| `git diff`                    | Show changes (before commit)       | `git diff`                       |
+| `git checkout -- <file>`      | Undo file changes                  | `git checkout -- LockIt.py`      |
+| `git reset --soft HEAD~1`     | Undo last commit (keep changes)    | `git reset --soft HEAD~1`        |
+| `git reset --hard HEAD~1`     | Delete last commit + changes       | `git reset --hard HEAD~1`        |
+| `git branch`                  | List branches                      | `git branch`                     |
+| `git branch <name>`           | Create branch                      | `git branch new-feature`         |
+| `git checkout <name>`         | Switch branch                      | `git checkout new-feature`       |
+| `git checkout -b <name>`      | Create + switch branch             | `git checkout -b test`           |
+| `git merge <branch>`          | Merge branch into current          | `git merge test`                 |
+| `git remote add origin <url>` | Link to GitHub                     | `git remote add origin repo_url` |
+| `git push`                    | Upload code                        | `git push origin main`           |
+| `git pull`                    | Download updates                   | `git pull`                       |
