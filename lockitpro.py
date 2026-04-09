@@ -1,7 +1,6 @@
-#!/usr/env python3
+#!/usr/bin/env python3
 """
-LockIt Pro - AES-256 File/Folder Locker with Context Menu Support
-Fixed: process exits completely when window is closed.
+LockIt Pro v1.1 - AES-256 File/Folder Locker with Unified UI
 """
 
 import sys
@@ -17,11 +16,31 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 
 # ------------------------------------------------------------
-# Constants & Crypto
+# Constants
 # ------------------------------------------------------------
 MAGIC_HEADER = b'LOCKITv1'
 HEADER_LEN = len(MAGIC_HEADER)
 
+# Unified UI Colors and Fonts
+UI_BG = '#f5f5f5'
+UI_FG = '#333333'
+UI_ACCENT = '#0078d7'
+UI_LOCK = '#d9534f'
+UI_UNLOCK = '#5bc0de'
+UI_HOVER_LOCK = '#c9302c'
+UI_HOVER_UNLOCK = '#31b0d5'
+UI_HOVER_ACCENT = '#005a9e'
+UI_FONT_FAMILY = 'Segoe UI'
+UI_FONT_SIZE_NORMAL = 10
+UI_FONT_SIZE_BOLD = 10
+UI_FONT_SIZE_TITLE = 18
+UI_FONT_SIZE_SMALL = 9
+UI_PADDING = 10
+UI_BUTTON_PADDING = 6
+
+# ------------------------------------------------------------
+# Crypto Functions
+# ------------------------------------------------------------
 def derive_key(password: bytes, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -54,7 +73,6 @@ def load_hint(encrypted_path: str) -> str:
         return ""
 
 def shred_file(file_path: str, passes: int = 3) -> None:
-    """Securely overwrite a file then delete."""
     if not os.path.exists(file_path):
         return
     try:
@@ -70,7 +88,6 @@ def shred_file(file_path: str, passes: int = 3) -> None:
                     remaining -= write_size
                 f.flush()
                 os.fsync(f.fileno())
-            # zero pass
             f.seek(0)
             remaining = length
             while remaining > 0:
@@ -168,7 +185,93 @@ def unlock_folder(folder_path: str, password: str) -> None:
                 decrypt_file(full, password)
 
 # ------------------------------------------------------------
-# Properties Dialog
+# Unified Style Setup
+# ------------------------------------------------------------
+def setup_unified_styles():
+    style = ttk.Style()
+    style.theme_use('clam')
+    
+    style.configure('.', background=UI_BG, foreground=UI_FG, font=(UI_FONT_FAMILY, UI_FONT_SIZE_NORMAL))
+    style.configure('TLabel', background=UI_BG)
+    style.configure('TFrame', background=UI_BG)
+    style.configure('TLabelframe', background=UI_BG, foreground=UI_FG, font=(UI_FONT_FAMILY, UI_FONT_SIZE_BOLD, 'bold'))
+    style.configure('TLabelframe.Label', background=UI_BG, foreground=UI_FG)
+    style.configure('TButton', font=(UI_FONT_FAMILY, UI_FONT_SIZE_BOLD, 'bold'), padding=UI_BUTTON_PADDING)
+    style.map('TButton', background=[('active', '#e6e6e6')])
+    style.configure('Accent.TButton', foreground='white', background=UI_ACCENT)
+    style.map('Accent.TButton', background=[('active', UI_HOVER_ACCENT)])
+    style.configure('Lock.TButton', foreground='white', background=UI_LOCK)
+    style.map('Lock.TButton', background=[('active', UI_HOVER_LOCK)])
+    style.configure('Unlock.TButton', foreground='white', background=UI_UNLOCK)
+    style.map('Unlock.TButton', background=[('active', UI_HOVER_UNLOCK)])
+    style.configure('TEntry', fieldbackground='white', padding=4)
+    style.configure('TProgressbar', background=UI_ACCENT, thickness=8)
+
+def center_window(window, width, height):
+    window.update_idletasks()
+    x = (window.winfo_screenwidth() // 2) - (width // 2)
+    y = (window.winfo_screenheight() // 2) - (height // 2)
+    window.geometry(f'{width}x{height}+{x}+{y}')
+
+def create_title_label(parent, text):
+    return ttk.Label(parent, text=text, font=(UI_FONT_FAMILY, UI_FONT_SIZE_TITLE, 'bold'))
+
+def create_status_label(parent):
+    return ttk.Label(parent, text="Ready", relief=tk.SUNKEN, anchor=tk.W, font=(UI_FONT_FAMILY, UI_FONT_SIZE_SMALL))
+
+def create_progressbar(parent):
+    return ttk.Progressbar(parent, mode='indeterminate', length=400)
+
+# ------------------------------------------------------------
+# Password Dialog (Unified UI)
+# ------------------------------------------------------------
+class PasswordDialog:
+    def __init__(self, title, prompt, hint=""):
+        self.result = None
+        self.dialog = tk.Tk()
+        self.dialog.title(title)
+        self.dialog.resizable(False, False)
+        self.dialog.configure(bg=UI_BG)
+        setup_unified_styles()
+        center_window(self.dialog, 420, 200)
+        
+        main = ttk.Frame(self.dialog, padding=UI_PADDING)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main, text=prompt, font=(UI_FONT_FAMILY, UI_FONT_SIZE_NORMAL)).pack(pady=UI_PADDING)
+        if hint:
+            ttk.Label(main, text=f"Hint: {hint}", foreground='gray').pack()
+        
+        self.pwd_var = tk.StringVar()
+        self.entry = ttk.Entry(main, textvariable=self.pwd_var, show="*", width=35)
+        self.entry.pack(pady=UI_PADDING)
+        self.entry.focus()
+        
+        self.show_var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(main, text="Show password", variable=self.show_var, command=self.toggle_password)
+        chk.pack(pady=(0, UI_PADDING))
+        
+        btn_frame = ttk.Frame(main)
+        btn_frame.pack(pady=UI_PADDING)
+        ttk.Button(btn_frame, text="OK", command=self.on_ok, style="Accent.TButton", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.on_cancel, width=12).pack(side=tk.LEFT, padx=5)
+        
+        self.dialog.bind('<Return>', lambda e: self.on_ok())
+        self.dialog.protocol("WM_DELETE_WINDOW", self.on_cancel)
+        self.dialog.mainloop()
+    
+    def toggle_password(self):
+        self.entry.config(show="" if self.show_var.get() else "*")
+    
+    def on_ok(self):
+        self.result = self.pwd_var.get()
+        self.dialog.destroy()
+    
+    def on_cancel(self):
+        self.dialog.destroy()
+
+# ------------------------------------------------------------
+# Properties Dialog (Unified UI)
 # ------------------------------------------------------------
 class PropertiesDialog:
     def __init__(self, parent, filepath):
@@ -178,49 +281,57 @@ class PropertiesDialog:
 
         self.win = tk.Toplevel(parent)
         self.win.title("LockIt File Properties")
-        self.win.geometry("450x350")
         self.win.resizable(False, False)
-        self.win.configure(bg='#f5f5f5')
-        self.center_window()
+        self.win.configure(bg=UI_BG)
+        setup_unified_styles()
+        center_window(self.win, 480, 420)
 
-        main = ttk.Frame(self.win, padding="15")
+        main = ttk.Frame(self.win, padding=UI_PADDING)
         main.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main, text="File:", font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, sticky='w', pady=5)
-        ttk.Label(main, text=os.path.basename(filepath), wraplength=300).grid(row=0, column=1, sticky='w', padx=10)
-
-        ttk.Label(main, text="Status:", font=('Segoe UI', 10, 'bold')).grid(row=1, column=0, sticky='w', pady=5)
-        status = "Locked (encrypted)" if self.is_locked else "Not locked"
-        ttk.Label(main, text=status).grid(row=1, column=1, sticky='w', padx=10)
-
-        ttk.Label(main, text="Full Path:", font=('Segoe UI', 10, 'bold')).grid(row=2, column=0, sticky='w', pady=5)
-        ttk.Label(main, text=filepath, wraplength=300).grid(row=2, column=1, sticky='w', padx=10)
+        # File info section
+        info_frame = ttk.LabelFrame(main, text="File Information", padding=UI_PADDING)
+        info_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
+        
+        ttk.Label(info_frame, text="Name:", font=(UI_FONT_FAMILY, UI_FONT_SIZE_BOLD, 'bold')).grid(row=0, column=0, sticky='w', pady=3)
+        ttk.Label(info_frame, text=os.path.basename(filepath), wraplength=350).grid(row=0, column=1, sticky='w', padx=10)
+        
+        ttk.Label(info_frame, text="Status:", font=(UI_FONT_FAMILY, UI_FONT_SIZE_BOLD, 'bold')).grid(row=1, column=0, sticky='w', pady=3)
+        status = "Locked (Encrypted)" if self.is_locked else "Not Locked"
+        ttk.Label(info_frame, text=status).grid(row=1, column=1, sticky='w', padx=10)
+        
+        ttk.Label(info_frame, text="Path:", font=(UI_FONT_FAMILY, UI_FONT_SIZE_BOLD, 'bold')).grid(row=2, column=0, sticky='w', pady=3)
+        ttk.Label(info_frame, text=filepath, wraplength=350).grid(row=2, column=1, sticky='w', padx=10)
 
         if self.is_locked:
-            ttk.Separator(main, orient='horizontal').grid(row=3, column=0, columnspan=2, sticky='ew', pady=10)
-            ttk.Label(main, text="Password Hint:", font=('Segoe UI', 10, 'bold')).grid(row=4, column=0, sticky='w', pady=5)
+            # Password hint section
+            hint_frame = ttk.LabelFrame(main, text="Password Hint", padding=UI_PADDING)
+            hint_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
+            
             self.hint_var = tk.StringVar(value=self.hint)
-            self.hint_entry = ttk.Entry(main, textvariable=self.hint_var, width=40)
-            self.hint_entry.grid(row=4, column=1, sticky='w', padx=10)
-            ttk.Button(main, text="Save Hint", command=self.save_hint, style="Accent.TButton").grid(row=5, column=1, sticky='e', pady=10)
-            ttk.Button(main, text="Change Password", command=self.change_password, style="Lock.TButton").grid(row=6, column=1, sticky='e', pady=5)
+            self.hint_entry = ttk.Entry(hint_frame, textvariable=self.hint_var, width=50)
+            self.hint_entry.pack(fill=tk.X, pady=(0, 5))
+            
+            btn_frame = ttk.Frame(hint_frame)
+            btn_frame.pack(fill=tk.X)
+            ttk.Button(btn_frame, text="Save Hint", command=self.save_hint, style="Accent.TButton", width=15).pack(side=tk.LEFT, padx=(0, 5))
+            
+            # Password management section
+            pwd_frame = ttk.LabelFrame(main, text="Password Management", padding=UI_PADDING)
+            pwd_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
+            
+            ttk.Button(pwd_frame, text="Change Password", command=self.change_password, style="Lock.TButton", width=20).pack()
+            ttk.Label(pwd_frame, text="Changing password will re-encrypt the file.", foreground='gray', font=(UI_FONT_FAMILY, UI_FONT_SIZE_SMALL)).pack(pady=(5, 0))
         else:
-            ttk.Label(main, text="This file is not encrypted. Use 'Lock' to protect it.", foreground='gray').grid(row=4, column=0, columnspan=2, pady=20)
+            ttk.Label(main, text="This file is not encrypted.", foreground='gray', font=(UI_FONT_FAMILY, UI_FONT_SIZE_NORMAL)).pack(pady=20)
 
-        ttk.Button(main, text="Close", command=self.win.destroy).grid(row=7, column=1, sticky='e', pady=10)
-
-    def center_window(self):
-        self.win.update_idletasks()
-        w = self.win.winfo_width()
-        h = self.win.winfo_height()
-        x = (self.win.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.win.winfo_screenheight() // 2) - (h // 2)
-        self.win.geometry(f'{w}x{h}+{x}+{y}')
+        # Close button
+        ttk.Button(main, text="Close", command=self.win.destroy, style="Accent.TButton", width=15).pack(pady=UI_PADDING)
 
     def save_hint(self):
         new_hint = self.hint_var.get().strip()
         save_hint(self.filepath, new_hint)
-        messagebox.showinfo("Success", "Password hint saved.")
+        messagebox.showinfo("Success", "Password hint saved successfully.")
 
     def change_password(self):
         import shutil
@@ -238,107 +349,76 @@ class PropertiesDialog:
             new_hint = simpledialog.askstring("Change Password", "Enter new hint (optional):", parent=self.win)
             encrypt_file(decrypted_path, new_pw, new_hint or "", shred=False)
             messagebox.showinfo("Success", "Password changed successfully.")
+            self.hint_var.set(new_hint or "")
         except Exception as e:
             messagebox.showerror("Error", str(e))
             os.remove(temp_lock)
 
 # ------------------------------------------------------------
-# GUI Application (Main Window)
+# Main GUI Application
 # ------------------------------------------------------------
 class LockItApp:
     def __init__(self, root):
         self.root = root
         root.title("LockIt Pro - AES-256 File/Folder Locker")
-        root.geometry("620x520")
         root.resizable(False, False)
-        root.configure(bg='#f5f5f5')
-        self.center_window()
-        self.setup_styles()
+        root.configure(bg=UI_BG)
+        setup_unified_styles()
+        center_window(root, 640, 540)
+        root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # Force exit when window is closed
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        main_frame = ttk.Frame(root, padding="20")
+        main_frame = ttk.Frame(root, padding=UI_PADDING)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title = ttk.Label(main_frame, text="LockIt Pro", font=('Segoe UI', 18, 'bold'))
-        title.pack(pady=(0, 15))
+        # Title
+        create_title_label(main_frame, "LockIt Pro").pack(pady=(0, UI_PADDING))
 
-        mode_frame = ttk.LabelFrame(main_frame, text="Operation Mode", padding="10")
-        mode_frame.pack(fill=tk.X, pady=(0, 15))
+        # Mode selection
+        mode_frame = ttk.LabelFrame(main_frame, text="Operation Mode", padding=UI_PADDING)
+        mode_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
         self.mode_var = tk.StringVar(value="file")
-        ttk.Radiobutton(mode_frame, text="File", variable=self.mode_var, value="file").pack(side=tk.LEFT, padx=10)
-        ttk.Radiobutton(mode_frame, text="Folder", variable=self.mode_var, value="folder").pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(mode_frame, text="File", variable=self.mode_var, value="file").pack(side=tk.LEFT, padx=UI_PADDING)
+        ttk.Radiobutton(mode_frame, text="Folder", variable=self.mode_var, value="folder").pack(side=tk.LEFT, padx=UI_PADDING)
 
-        path_frame = ttk.LabelFrame(main_frame, text="Target", padding="10")
-        path_frame.pack(fill=tk.X, pady=(0, 15))
+        # Target selection
+        target_frame = ttk.LabelFrame(main_frame, text="Target", padding=UI_PADDING)
+        target_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
         self.path_var = tk.StringVar()
-        path_entry = ttk.Entry(path_frame, textvariable=self.path_var, state='readonly', font=('Segoe UI', 10))
-        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        browse_btn = ttk.Button(path_frame, text="Browse", command=self.browse, style="Accent.TButton")
-        browse_btn.pack(side=tk.RIGHT)
+        self.path_entry = ttk.Entry(target_frame, textvariable=self.path_var, state='readonly')
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, UI_PADDING))
+        ttk.Button(target_frame, text="Browse", command=self.browse, style="Accent.TButton", width=12).pack(side=tk.RIGHT)
 
-        pwd_frame = ttk.LabelFrame(main_frame, text="Password", padding="10")
-        pwd_frame.pack(fill=tk.X, pady=(0, 15))
+        # Password section
+        pwd_frame = ttk.LabelFrame(main_frame, text="Password", padding=UI_PADDING)
+        pwd_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
         self.pass_var = tk.StringVar()
-        self.pass_entry = ttk.Entry(pwd_frame, textvariable=self.pass_var, show="*", font=('Segoe UI', 10))
+        self.pass_entry = ttk.Entry(pwd_frame, textvariable=self.pass_var, show="*")
         self.pass_entry.pack(fill=tk.X, pady=(0, 5))
         self.show_pwd = tk.BooleanVar(value=False)
-        chk = ttk.Checkbutton(pwd_frame, text="Show password", variable=self.show_pwd, command=self.toggle_password)
-        chk.pack(anchor=tk.W)
+        ttk.Checkbutton(pwd_frame, text="Show password", variable=self.show_pwd, command=self.toggle_password).pack(anchor=tk.W)
 
+        # Shred option
         self.shred_var = tk.BooleanVar(value=True)
-        shred_frame = ttk.Frame(main_frame)
-        shred_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Checkbutton(shred_frame, text="Securely shred original files (overwrite before delete)",
-                        variable=self.shred_var).pack(anchor=tk.W)
+        ttk.Checkbutton(main_frame, text="Securely shred original files (overwrite before delete)", 
+                        variable=self.shred_var).pack(anchor=tk.W, pady=(0, UI_PADDING))
 
+        # Action buttons
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill=tk.X, pady=(0, 15))
+        btn_frame.pack(fill=tk.X, pady=(0, UI_PADDING))
         self.lock_btn = ttk.Button(btn_frame, text="LOCK", command=self.lock, style="Lock.TButton")
-        self.lock_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 10))
+        self.lock_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
         self.unlock_btn = ttk.Button(btn_frame, text="UNLOCK", command=self.unlock, style="Unlock.TButton")
-        self.unlock_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(10, 0))
+        self.unlock_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
 
-        self.progress = ttk.Progressbar(main_frame, mode='indeterminate', length=400)
-        self.progress.pack(fill=tk.X, pady=(0, 10))
+        # Progress bar
+        self.progress = create_progressbar(main_frame)
+        self.progress.pack(fill=tk.X, pady=(0, UI_PADDING))
 
-        self.status_label = ttk.Label(root, text="Ready", relief=tk.SUNKEN, anchor=tk.W, font=('Segoe UI', 9))
+        # Status bar
+        self.status_label = create_status_label(root)
         self.status_label.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.operation_thread = None
-
-    def center_window(self):
-        self.root.update_idletasks()
-        w = self.root.winfo_width()
-        h = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.root.winfo_screenheight() // 2) - (h // 2)
-        self.root.geometry(f'{w}x{h}+{x}+{y}')
-
-    def setup_styles(self):
-        style = ttk.Style()
-        style.theme_use('clam')
-        bg = '#f5f5f5'
-        fg = '#333333'
-        accent = '#0078d7'
-        lock_color = '#d9534f'
-        unlock_color = '#5bc0de'
-        style.configure('.', background=bg, foreground=fg, font=('Segoe UI', 10))
-        style.configure('TLabel', background=bg)
-        style.configure('TFrame', background=bg)
-        style.configure('TLabelframe', background=bg, foreground=fg, font=('Segoe UI', 10, 'bold'))
-        style.configure('TLabelframe.Label', background=bg, foreground=fg)
-        style.configure('TButton', font=('Segoe UI', 10, 'bold'), padding=6)
-        style.map('TButton', background=[('active', '#e6e6e6')])
-        style.configure('Accent.TButton', foreground='white', background=accent)
-        style.map('Accent.TButton', background=[('active', '#005a9e')])
-        style.configure('Lock.TButton', foreground='white', background=lock_color)
-        style.map('Lock.TButton', background=[('active', '#c9302c')])
-        style.configure('Unlock.TButton', foreground='white', background=unlock_color)
-        style.map('Unlock.TButton', background=[('active', '#31b0d5')])
-        style.configure('TEntry', fieldbackground='white', padding=4)
-        style.configure('TProgressbar', background=accent, thickness=8)
 
     def toggle_password(self):
         self.pass_entry.config(show="" if self.show_pwd.get() else "*")
@@ -412,46 +492,12 @@ class LockItApp:
             self._run_operation("Unlock Folder", lambda p, pw: unlock_folder(p, pw))
 
     def on_closing(self):
-        """Force exit when window is closed."""
         self.root.destroy()
         sys.exit(0)
 
 # ------------------------------------------------------------
-# Command-line handlers for context menu
+# Context Menu Handlers
 # ------------------------------------------------------------
-def show_password_dialog(title, prompt, hint=""):
-    dialog = tk.Tk()
-    dialog.title(title)
-    dialog.geometry("400x180")
-    dialog.resizable(False, False)
-    dialog.configure(bg='#f5f5f5')
-    dialog.update_idletasks()
-    x = (dialog.winfo_screenwidth() // 2) - 200
-    y = (dialog.winfo_screenheight() // 2) - 90
-    dialog.geometry(f'+{x}+{y}')
-
-    result = [None]
-    ttk.Label(dialog, text=prompt, font=('Segoe UI', 10)).pack(pady=10)
-    if hint:
-        ttk.Label(dialog, text=f"Hint: {hint}", foreground='gray').pack()
-    pwd_var = tk.StringVar()
-    entry = ttk.Entry(dialog, textvariable=pwd_var, show="*", width=30)
-    entry.pack(pady=10)
-    entry.focus()
-
-    def on_ok():
-        result[0] = pwd_var.get() # type: ignore
-        dialog.destroy()
-    def on_cancel():
-        dialog.destroy()
-    btn_frame = ttk.Frame(dialog)
-    btn_frame.pack(pady=10)
-    ttk.Button(btn_frame, text="OK", command=on_ok, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=5)
-    dialog.bind('<Return>', lambda e: on_ok())
-    dialog.mainloop()
-    return result[0]
-
 def handle_context_menu():
     if len(sys.argv) < 2:
         return
@@ -460,11 +506,11 @@ def handle_context_menu():
         target = sys.argv[2]
         shred = True
         if os.path.isdir(target):
-            password = show_password_dialog("Lock Folder", "Enter password to lock this folder:")
-            if password:
+            pwd_dialog = PasswordDialog("Lock Folder", "Enter password to lock this folder:")
+            if pwd_dialog.result:
                 hint = simpledialog.askstring("Password Hint", "Enter a hint for this password (optional):")
                 try:
-                    lock_folder(target, password, hint or "", shred)
+                    lock_folder(target, pwd_dialog.result, hint or "", shred)
                     messagebox.showinfo("Success", f"Folder locked: {target}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -472,11 +518,11 @@ def handle_context_menu():
             if is_lockit_file(target):
                 messagebox.showerror("Error", "File is already locked. Use Unlock.")
                 sys.exit(0)
-            password = show_password_dialog("Lock File", f"Enter password to lock:\n{os.path.basename(target)}")
-            if password:
+            pwd_dialog = PasswordDialog("Lock File", f"Enter password to lock:\n{os.path.basename(target)}")
+            if pwd_dialog.result:
                 hint = simpledialog.askstring("Password Hint", "Enter a hint for this password (optional):")
                 try:
-                    new_path = encrypt_file(target, password, hint or "", shred)
+                    new_path = encrypt_file(target, pwd_dialog.result, hint or "", shred)
                     messagebox.showinfo("Success", f"File locked: {new_path}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -484,10 +530,10 @@ def handle_context_menu():
     elif action == "--unlock" and len(sys.argv) >= 3:
         target = sys.argv[2]
         if os.path.isdir(target):
-            password = show_password_dialog("Unlock Folder", "Enter password to unlock this folder:")
-            if password:
+            pwd_dialog = PasswordDialog("Unlock Folder", "Enter password to unlock this folder:")
+            if pwd_dialog.result:
                 try:
-                    unlock_folder(target, password)
+                    unlock_folder(target, pwd_dialog.result)
                     messagebox.showinfo("Success", f"Folder unlocked: {target}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -496,11 +542,10 @@ def handle_context_menu():
                 messagebox.showerror("Error", "File is not locked or not a valid LockIt file.")
                 sys.exit(0)
             hint = load_hint(target)
-            prompt = f"Enter password to unlock:\n{os.path.basename(target)}"
-            password = show_password_dialog("Unlock File", prompt, hint)
-            if password:
+            pwd_dialog = PasswordDialog("Unlock File", f"Enter password to unlock:\n{os.path.basename(target)}", hint)
+            if pwd_dialog.result:
                 try:
-                    original = decrypt_file(target, password)
+                    original = decrypt_file(target, pwd_dialog.result)
                     messagebox.showinfo("Success", f"File unlocked: {original}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -509,6 +554,7 @@ def handle_context_menu():
         target = sys.argv[2]
         root = tk.Tk()
         root.withdraw()
+        setup_unified_styles()
         PropertiesDialog(root, target)
         root.mainloop()
         sys.exit(0)
