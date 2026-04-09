@@ -1,7 +1,7 @@
 ; LockIt Pro Installer Script
 [Setup]
 AppName=LockIt Pro
-AppVersion=1.1
+AppVersion=1.2
 AppPublisher=Lituz
 DefaultDirName={pf}\LockItPro
 DefaultGroupName=LockIt Pro
