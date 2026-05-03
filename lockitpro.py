@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LockIt Pro v1.1 - AES-256 File/Folder Locker with Fully Synchronized UI
+LockIt Pro v1.3 - AES-256 File/Folder Encryption
 """
 
 import sys
@@ -9,11 +9,11 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes #type: ignore
+from cryptography.exceptions import InvalidTag # type: ignore
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC # type: ignore
+from cryptography.hazmat.primitives import hashes # type: ignore
+from cryptography.hazmat.backends import default_backend # type: ignore
 
 # ------------------------------------------------------------
 # Global UI Constants
@@ -33,12 +33,10 @@ UI = {
     'button_padding': 6,
     'window_width': 620,
     'window_height': 540,
-    'dialog_width': 420,
-    'dialog_height': 200,
-    'hint_width': 400,
-    'hint_height': 180,
+    'dialog_width': 450,
+    'dialog_height': 250,
     'prop_width': 500,
-    'prop_height': 450,
+    'prop_height': 480,
 }
 
 # ------------------------------------------------------------
@@ -63,20 +61,6 @@ def is_lockit_file(file_path: str) -> bool:
             return f.read(HEADER_LEN) == MAGIC_HEADER
     except:
         return False
-
-def get_hint_file_path(encrypted_path: str) -> str:
-    return encrypted_path + ".hint"
-
-def save_hint(encrypted_path: str, hint: str) -> None:
-    with open(get_hint_file_path(encrypted_path), 'w', encoding='utf-8') as f:
-        f.write(hint)
-
-def load_hint(encrypted_path: str) -> str:
-    try:
-        with open(get_hint_file_path(encrypted_path), 'r', encoding='utf-8') as f:
-            return f.read()
-    except:
-        return ""
 
 def shred_file(file_path: str, passes: int = 3) -> None:
     if not os.path.exists(file_path):
@@ -110,72 +94,77 @@ def shred_file(file_path: str, passes: int = 3) -> None:
             pass
         raise ValueError(f"Shredding failed: {str(e)}")
 
-def encrypt_file(file_path: str, password: str, hint: str = "", shred: bool = True) -> str:
+def encrypt_file(file_path: str, password: str, shred: bool = True) -> str:
     if is_lockit_file(file_path):
         raise ValueError("File is already encrypted.")
+    
     salt = os.urandom(16)
-    key = derive_key(password.encode('utf-8'), salt)
     nonce = os.urandom(12)
+    key = derive_key(password.encode('utf-8'), salt)
+    
+    with open(file_path, 'rb') as f:
+        file_data = f.read()
+    
     cipher = Cipher(algorithms.AES(key), modes.GCM(nonce), backend=default_backend())
     encryptor = cipher.encryptor()
+    ciphertext = encryptor.update(file_data) + encryptor.finalize()
+    tag = encryptor.tag
+    
+    # Write: header + salt + nonce + ciphertext + tag
     output_path = file_path + ".lockit"
-    with open(file_path, 'rb') as f_in, open(output_path, 'wb') as f_out:
+    with open(output_path, 'wb') as f_out:
         f_out.write(MAGIC_HEADER)
         f_out.write(salt)
         f_out.write(nonce)
-        while True:
-            chunk = f_in.read(1024 * 1024)
-            if not chunk:
-                break
-            f_out.write(encryptor.update(chunk))
-        encryptor.finalize()
-        f_out.write(encryptor.tag)
+        f_out.write(ciphertext)
+        f_out.write(tag)
+    
     if shred:
         shred_file(file_path)
     else:
         os.remove(file_path)
-    if hint:
-        save_hint(output_path, hint)
+    
     return output_path
 
 def decrypt_file(encrypted_path: str, password: str) -> str:
+    """Decrypt a .lockit file. Returns original file path."""
     if not is_lockit_file(encrypted_path):
         raise ValueError("Not a valid LockIt file.")
+    
     with open(encrypted_path, 'rb') as f:
         f.read(HEADER_LEN)
         salt = f.read(16)
         nonce = f.read(12)
-        f.seek(0, os.SEEK_END)
-        size = f.tell()
-        tag_start = size - 16
-        f.seek(tag_start)
-        tag = f.read(16)
-        f.seek(HEADER_LEN + 16 + 12)
-        ciphertext = f.read(tag_start - (HEADER_LEN + 16 + 12))
+        remaining = f.read()
+        if len(remaining) < 16:
+            raise ValueError("File corrupted")
+        ciphertext = remaining[:-16]
+        tag = remaining[-16:]
+    
     key = derive_key(password.encode('utf-8'), salt)
+    
     try:
         cipher = Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=default_backend())
         decryptor = cipher.decryptor()
-        original = encrypted_path[:-7] if encrypted_path.endswith(".lockit") else encrypted_path + ".decrypted"
-        with open(original, 'wb') as f_out:
-            f_out.write(decryptor.update(ciphertext))
-            decryptor.finalize()
+        file_data = decryptor.update(ciphertext) + decryptor.finalize()
     except InvalidTag:
         raise ValueError("Incorrect password or corrupted file.")
+    
+    original_path = encrypted_path[:-7] if encrypted_path.endswith(".lockit") else encrypted_path + ".decrypted"
+    with open(original_path, 'wb') as f_out:
+        f_out.write(file_data)
+    
     os.remove(encrypted_path)
-    hint_path = get_hint_file_path(encrypted_path)
-    if os.path.exists(hint_path):
-        os.remove(hint_path)
-    return original
+    return original_path
 
-def lock_folder(folder_path: str, password: str, hint: str = "", shred: bool = True) -> None:
+def lock_folder(folder_path: str, password: str, shred: bool = True) -> None:
     for root, _, files in os.walk(folder_path):
         for file in files:
             full = os.path.join(root, file)
             if is_lockit_file(full):
                 continue
             if os.path.isfile(full):
-                encrypt_file(full, password, hint, shred)
+                encrypt_file(full, password, shred)
 
 def unlock_folder(folder_path: str, password: str) -> None:
     for root, _, files in os.walk(folder_path):
@@ -224,17 +213,18 @@ def create_status_bar(parent):
                      font=(UI['font_family'], UI['font_size_small']))
 
 # ------------------------------------------------------------
-# Password Dialog (Fixed)
+# Password Dialog
 # ------------------------------------------------------------
 class PasswordDialog:
-    def __init__(self, title, prompt, hint=""):
-        self.result = None
+    def __init__(self, title, prompt, confirm=False):
+        self.result: str = ""
+        self.confirm_mode = confirm
         self.dialog = tk.Tk()
         self.dialog.title(title)
         self.dialog.resizable(False, False)
         self.dialog.configure(bg=UI['bg'])
         
-        w, h = UI['dialog_width'], UI['dialog_height']
+        w, h = UI['dialog_width'], UI['dialog_height'] if not confirm else UI['dialog_height'] + 40
         x = (self.dialog.winfo_screenwidth() // 2) - (w // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (h // 2)
         self.dialog.geometry(f'{w}x{h}+{x}+{y}')
@@ -244,11 +234,7 @@ class PasswordDialog:
         
         tk.Label(main, text=prompt, bg=UI['bg'], fg=UI['fg'],
                 font=(UI['font_family'], UI['font_size_normal']),
-                wraplength=350, justify='center').pack(pady=(0, 10))
-        
-        if hint:
-            tk.Label(main, text=f"Hint: {hint}", bg=UI['bg'], fg='gray',
-                    font=(UI['font_family'], UI['font_size_small'])).pack(pady=(0, 10))
+                wraplength=380, justify='center').pack(pady=(0, 10))
         
         self.pwd_var = tk.StringVar()
         self.entry = tk.Entry(main, textvariable=self.pwd_var, show="*",
@@ -256,6 +242,16 @@ class PasswordDialog:
                              bg='white', width=35)
         self.entry.pack(pady=(0, 10))
         self.entry.focus()
+        
+        # Confirmation field if needed
+        if confirm:
+            tk.Label(main, text="Confirm Password:", bg=UI['bg'], fg=UI['fg'],
+                    font=(UI['font_family'], UI['font_size_normal'])).pack(anchor=tk.W, pady=(0, 5))
+            self.confirm_var = tk.StringVar()
+            self.confirm_entry = tk.Entry(main, textvariable=self.confirm_var, show="*",
+                                         font=(UI['font_family'], UI['font_size_normal']),
+                                         bg='white', width=35)
+            self.confirm_entry.pack(pady=(0, 10))
         
         self.show_var = tk.BooleanVar(value=False)
         tk.Checkbutton(main, text="Show password", variable=self.show_var,
@@ -279,77 +275,31 @@ class PasswordDialog:
         self.dialog.mainloop()
     
     def toggle_password(self):
-        self.entry.config(show="" if self.show_var.get() else "*")
+        show = "" if self.show_var.get() else "*"
+        self.entry.config(show=show)
+        if self.confirm_mode:
+            self.confirm_entry.config(show=show)
     
     def ok(self):
-        self.result = self.pwd_var.get()
+        password = self.pwd_var.get()
+        if self.confirm_mode:
+            confirm = self.confirm_var.get()
+            if password != confirm:
+                messagebox.showerror("Error", "Passwords do not match. Please try again.")
+                return
+        self.result = password
         self.dialog.destroy()
     
     def cancel(self):
         self.dialog.destroy()
 
 # ------------------------------------------------------------
-# Hint Dialog (Fixed)
-# ------------------------------------------------------------
-class HintDialog:
-    def __init__(self, title, prompt):
-        self.result = None
-        self.dialog = tk.Tk()
-        self.dialog.title(title)
-        self.dialog.resizable(False, False)
-        self.dialog.configure(bg=UI['bg'])
-        
-        w, h = UI['hint_width'], UI['hint_height']
-        x = (self.dialog.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (h // 2)
-        self.dialog.geometry(f'{w}x{h}+{x}+{y}')
-        
-        main = tk.Frame(self.dialog, bg=UI['bg'])
-        main.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        tk.Label(main, text=prompt, bg=UI['bg'], fg=UI['fg'],
-                font=(UI['font_family'], UI['font_size_normal'])).pack(pady=(0, 10))
-        
-        self.hint_var = tk.StringVar()
-        self.entry = tk.Entry(main, textvariable=self.hint_var,
-                             font=(UI['font_family'], UI['font_size_normal']),
-                             bg='white', width=40)
-        self.entry.pack(pady=(0, 15))
-        self.entry.focus()
-        
-        btn_frame = tk.Frame(main, bg=UI['bg'])
-        btn_frame.pack()
-        
-        tk.Button(btn_frame, text="OK", command=self.ok,
-                 bg=UI['accent'], fg='white',
-                 font=(UI['font_family'], UI['font_size_bold'], 'bold'),
-                 padx=25, pady=5).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(btn_frame, text="Skip", command=self.skip,
-                 bg='#e0e0e0', fg=UI['fg'],
-                 font=(UI['font_family'], UI['font_size_bold'], 'bold'),
-                 padx=25, pady=5).pack(side=tk.LEFT, padx=5)
-        
-        self.dialog.bind('<Return>', lambda e: self.ok())
-        self.dialog.protocol("WM_DELETE_WINDOW", self.skip)
-        self.dialog.mainloop()
-    
-    def ok(self):
-        self.result = self.hint_var.get()
-        self.dialog.destroy()
-    
-    def skip(self):
-        self.result = ""
-        self.dialog.destroy()
-
-# ------------------------------------------------------------
-# Properties Dialog (Synchronized)
+# Properties Dialog
 # ------------------------------------------------------------
 class PropertiesDialog:
     def __init__(self, parent, filepath):
         self.filepath = filepath
         self.is_locked = is_lockit_file(filepath)
-        self.hint = load_hint(filepath) if self.is_locked else ""
 
         self.win = tk.Toplevel(parent)
         self.win.title("LockIt File Properties")
@@ -357,6 +307,7 @@ class PropertiesDialog:
         self.win.configure(bg=UI['bg'])
         setup_styles()
         center_window(self.win, UI['prop_width'], UI['prop_height'])
+        self.win.protocol("WM_DELETE_WINDOW", self.on_close)
 
         main = ttk.Frame(self.win, padding=UI['padding'])
         main.pack(fill=tk.BOTH, expand=True)
@@ -375,56 +326,14 @@ class PropertiesDialog:
             ttk.Label(info, text=value, wraplength=350).grid(row=row, column=1, sticky='w', padx=10)
             row += 1
 
-        if self.is_locked:
-            # Hint section
-            hint_frame = ttk.LabelFrame(main, text="Password Hint", padding=UI['padding'])
-            hint_frame.pack(fill=tk.X, pady=(0, UI['padding']))
-            
-            self.hint_var = tk.StringVar(value=self.hint)
-            self.hint_entry = ttk.Entry(hint_frame, textvariable=self.hint_var)
-            self.hint_entry.pack(fill=tk.X, pady=(0, 5))
-            
-            ttk.Button(hint_frame, text="Save Hint", command=self.save_hint,
-                      style="Accent.TButton").pack()
-            
-            # Password management
-            pwd_frame = ttk.LabelFrame(main, text="Password Management", padding=UI['padding'])
-            pwd_frame.pack(fill=tk.X, pady=(0, UI['padding']))
-            
-            ttk.Button(pwd_frame, text="Change Password", command=self.change_password,
-                      style="Lock.TButton").pack()
-            ttk.Label(pwd_frame, text="Changing password will re-encrypt the file.",
-                     foreground='gray', font=(UI['font_family'], UI['font_size_small'])).pack(pady=(5, 0))
-        else:
+        if not self.is_locked:
             ttk.Label(main, text="This file is not encrypted.", foreground='gray').pack(pady=20)
 
-        ttk.Button(main, text="Close", command=self.win.destroy,
+        ttk.Button(main, text="Close", command=self.on_close,
                   style="Accent.TButton", width=15).pack(pady=UI['padding'])
 
-    def save_hint(self):
-        save_hint(self.filepath, self.hint_var.get().strip())
-        messagebox.showinfo("Success", "Password hint saved.")
-
-    def change_password(self):
-        import shutil
-        pw_dialog = PasswordDialog("Change Password", "Enter current password:")
-        if not pw_dialog.result:
-            return
-        temp = self.filepath + ".temp"
-        shutil.copy2(self.filepath, temp)
-        try:
-            decrypted = decrypt_file(temp, pw_dialog.result)
-            new_pw_dialog = PasswordDialog("Change Password", "Enter new password:")
-            if not new_pw_dialog.result:
-                os.remove(decrypted)
-                return
-            new_hint_dialog = HintDialog("Password Hint", "Enter new hint (optional):")
-            encrypt_file(decrypted, new_pw_dialog.result, new_hint_dialog.result, shred=False) # type: ignore
-            messagebox.showinfo("Success", "Password changed successfully.")
-            self.hint_var.set(new_hint_dialog.result) # pyright: ignore[reportArgumentType]
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-            os.remove(temp)
+    def on_close(self):
+        self.win.destroy()
 
 # ------------------------------------------------------------
 # Main Application
@@ -442,7 +351,6 @@ class LockItApp:
         main = ttk.Frame(root, padding=UI['padding'])
         main.pack(fill=tk.BOTH, expand=True)
 
-        # Title
         create_title(main, "LockIt Pro").pack(pady=(0, UI['padding']))
 
         # Mode
@@ -466,6 +374,13 @@ class LockItApp:
         self.pass_var = tk.StringVar()
         self.pass_entry = ttk.Entry(pwd_frame, textvariable=self.pass_var, show="*")
         self.pass_entry.pack(fill=tk.X, pady=(0, 5))
+        
+        # Confirmation password field (always visible for locking)
+        ttk.Label(pwd_frame, text="Confirm Password:").pack(anchor=tk.W, pady=(5, 0))
+        self.confirm_var = tk.StringVar()
+        self.confirm_entry = ttk.Entry(pwd_frame, textvariable=self.confirm_var, show="*")
+        self.confirm_entry.pack(fill=tk.X, pady=(0, 5))
+        
         self.show_pwd = tk.BooleanVar(value=False)
         ttk.Checkbutton(pwd_frame, text="Show password", variable=self.show_pwd,
                        command=self.toggle_password).pack(anchor=tk.W)
@@ -483,18 +398,18 @@ class LockItApp:
         self.unlock_btn = ttk.Button(btn_frame, text="UNLOCK", command=self.unlock, style="Unlock.TButton")
         self.unlock_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
 
-        # Progress
         self.progress = ttk.Progressbar(main, mode='indeterminate')
         self.progress.pack(fill=tk.X, pady=(0, UI['padding']))
 
-        # Status
         self.status_label = create_status_bar(root)
         self.status_label.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.operation_thread = None
 
     def toggle_password(self):
-        self.pass_entry.config(show="" if self.show_pwd.get() else "*")
+        show = "" if self.show_pwd.get() else "*"
+        self.pass_entry.config(show=show)
+        self.confirm_entry.config(show=show)
 
     def browse(self):
         if self.mode_var.get() == "file":
@@ -530,17 +445,18 @@ class LockItApp:
         self.operation_thread = threading.Thread(target=target, daemon=True)
         self.operation_thread.start()
 
-    def _on_success(self, operation_name, new_path=None):
+    def _on_success(self, operation_name, result):
         self.progress.stop()
         self.lock_btn.config(state=tk.NORMAL)
         self.unlock_btn.config(state=tk.NORMAL)
-        if new_path and os.path.exists(new_path):
-            self.path_var.set(new_path)
-            self.status_label.config(text=f"{operation_name} completed -> {os.path.basename(new_path)}")
+        if result and isinstance(result, str) and os.path.exists(result):
+            self.path_var.set(result)
+            self.status_label.config(text=f"{operation_name} completed -> {os.path.basename(result)}")
         else:
             self.status_label.config(text=f"{operation_name} completed!")
         messagebox.showinfo("Success", f"{operation_name} completed!")
         self.pass_var.set("")
+        self.confirm_var.set("")
         self.show_pwd.set(False)
         self.toggle_password()
 
@@ -553,10 +469,26 @@ class LockItApp:
 
     def lock(self):
         shred = self.shred_var.get()
+        
+        # Validate password
+        password = self.pass_var.get()
+        if not password:
+            messagebox.showerror("Error", "Password cannot be empty.")
+            return
+        
+        # Validate confirmation matches
+        confirm = self.confirm_var.get()
+        if password != confirm:
+            messagebox.showerror("Error", "Passwords do not match.")
+            self.confirm_var.set("")
+            self.confirm_entry.focus()
+            return
+        
+        # Passwords match, proceed with encryption
         if self.mode_var.get() == "file":
-            self._run_operation("Lock File", lambda p, pw: encrypt_file(p, pw, shred=shred))
+            self._run_operation("Lock File", lambda p, pw: encrypt_file(p, pw, shred))
         else:
-            self._run_operation("Lock Folder", lambda p, pw: lock_folder(p, pw, shred=shred))
+            self._run_operation("Lock Folder", lambda p, pw: lock_folder(p, pw, shred))
 
     def unlock(self):
         if self.mode_var.get() == "file":
@@ -579,11 +511,10 @@ def handle_context_menu():
     if action == "--lock" and len(sys.argv) >= 3:
         target = sys.argv[2]
         if os.path.isdir(target):
-            pwd_dlg = PasswordDialog("Lock Folder", "Enter password to lock this folder:")
+            pwd_dlg = PasswordDialog("Set Password", "Enter password to lock this folder:", confirm=True)
             if pwd_dlg.result:
-                hint_dlg = HintDialog("Password Hint", "Enter a hint for this password (optional):")
                 try:
-                    lock_folder(target, pwd_dlg.result, hint_dlg.result, True) # type: ignore
+                    lock_folder(target, pwd_dlg.result, True)
                     messagebox.showinfo("Success", f"Folder locked: {target}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -591,11 +522,10 @@ def handle_context_menu():
             if is_lockit_file(target):
                 messagebox.showerror("Error", "File is already locked. Use Unlock.")
                 sys.exit(0)
-            pwd_dlg = PasswordDialog("Lock File", f"Enter password to lock:\n{os.path.basename(target)}")
+            pwd_dlg = PasswordDialog("Set Password", f"Enter password to lock:\n{os.path.basename(target)}", confirm=True)
             if pwd_dlg.result:
-                hint_dlg = HintDialog("Password Hint", "Enter a hint for this password (optional):")
                 try:
-                    new_path = encrypt_file(target, pwd_dlg.result, hint_dlg.result, True) # type: ignore
+                    new_path = encrypt_file(target, pwd_dlg.result, True)
                     messagebox.showinfo("Success", f"File locked: {new_path}")
                 except Exception as e:
                     messagebox.showerror("Error", str(e))
@@ -615,8 +545,7 @@ def handle_context_menu():
             if not is_lockit_file(target):
                 messagebox.showerror("Error", "File is not locked or not a valid LockIt file.")
                 sys.exit(0)
-            hint = load_hint(target)
-            pwd_dlg = PasswordDialog("Unlock File", f"Enter password to unlock:\n{os.path.basename(target)}", hint)
+            pwd_dlg = PasswordDialog("Unlock File", f"Enter password to unlock:\n{os.path.basename(target)}")
             if pwd_dlg.result:
                 try:
                     original = decrypt_file(target, pwd_dlg.result)
@@ -627,11 +556,11 @@ def handle_context_menu():
         
     elif action == "--properties" and len(sys.argv) >= 3:
         target = sys.argv[2]
-        root = tk.Tk()
-        root.withdraw()
+        temp_root = tk.Tk()
+        temp_root.withdraw()
         setup_styles()
-        PropertiesDialog(root, target)
-        root.mainloop()
+        PropertiesDialog(temp_root, target)
+        temp_root.mainloop()
         sys.exit(0)
         
     else:
