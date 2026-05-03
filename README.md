@@ -12,7 +12,6 @@ Built with Python | AES-256-GCM encryption | No cloud. No tracking. Just locks.
 -  **Secure shredding** — original files are overwritten 3 times before deletion
 -  **Password confirmation** — prevents accidental lockouts from typos
 -  **Right-click menu** — lock/unlock directly from Windows Explorer
--  **Portable .exe** — no Python needed, just download and run
 
 ---
 
